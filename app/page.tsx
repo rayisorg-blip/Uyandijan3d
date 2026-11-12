@@ -1,4 +1,4 @@
 'use client';
 import dynamic from 'next/dynamic';
-const CityApp = dynamic(() => import('@/components/CityApp'), { ssr: false });
-export default function Page() { return <CityApp />; }
+const City = dynamic(() => import('@/components/City'), { ssr: false });
+export default function Page() { return <City />; }
