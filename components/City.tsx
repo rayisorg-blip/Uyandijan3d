@@ -5,14 +5,19 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { sb } from '@/lib/supabase';
 
 type Parcel = { id: number; cx: number; cy: number; kind: string; insta: string; paid: boolean; created_at: string };
-const GW = 36, P = 12, TTL = 30 * 60e3, PRICE: Record<string, number> = { house: 25000, shop: 50000 };
+const GW = 36, P = 12, N = GW * P, TTL = 30 * 60e3, PRICE: Record<string, number> = { house: 25000, shop: 50000 };
 const CARD = process.env.NEXT_PUBLIC_PAY_CARD || 'karta raqami kiritilmagan', CONTACT = process.env.NEXT_PUBLIC_CONTACT || '';
-const isRoad = (c: number, r: number) => c % 5 === 4 || r % 5 === 4;
+const HW = [1.6, 2.3, 3, 4.5], RW = [3.2, 4.6, 6, 9];
 const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
 const hash = (s: string) => { let h = 2166136261; for (const ch of s) h = Math.imul(h ^ ch.charCodeAt(0), 16777619); return h >>> 0; };
 const rnd = (seed: number) => { let s = seed || 1; return () => (s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 4294967296; };
 const WALLS = ['#e8dcc8', '#d9a066', '#b5c4d1', '#c9a0a0', '#a9c9a4', '#e3d08a', '#9fb4c9'], ROOFS = ['#7a2e2e', '#2f3e5c', '#3b5b3b', '#4a3a2a', '#5a2f5a', '#222831'];
 const mixc = (a: number[], b: number[], t: number) => a.map((v, i) => Math.round(v + (b[i] - v) * t));
+// terrain height: gentle hills in the city, mountains around it
+const H = (x: number, z: number) => {
+  const rim = clamp((Math.hypot(x - N / 2, z - N / 2) - 330) / 180, 0, 1);
+  return 8 + 4 * Math.sin(x / 90) * Math.cos(z / 110) + 2.5 * Math.sin((x + z) / 80 + 1) + 0.8 * Math.sin(x / 27) * Math.sin(z / 33) + 60 * rim * rim;
+};
 
 const winMats: THREE.MeshLambertMaterial[] = [], texCache: Record<string, THREE.CanvasTexture> = {};
 const winTex = (lit: boolean, cols: number, rows: number) => {
@@ -46,18 +51,18 @@ const build = (p: Parcel) => {
   const r = rnd(hash(p.insta)), g = new THREE.Group(), wall = WALLS[Math.floor(r() * WALLS.length)], roof = ROOFS[Math.floor(r() * ROOFS.length)];
   if (p.kind === 'shop') {
     const w = 9.5, d = 7, h = 4.6; g.userData.top = h + 1;
-    g.add(boxm(w, h, d, wallMat(wall, 3, 1), 0, h / 2, 0), boxm(w + 0.6, 0.5, d + 0.6, flat('#555b66'), 0, h + 0.25, 0));
+    g.add(boxm(w + 0.4, 2.4, d + 0.4, flat('#6b6258'), 0, -1, 0), boxm(w, h, d, wallMat(wall, 3, 1), 0, h / 2, 0), boxm(w + 0.6, 0.5, d + 0.6, flat('#555b66'), 0, h + 0.25, 0));
     const aw = boxm(w, 0.3, 2, flat(['#c0392b', '#2e86c1', '#27ae60', '#f39c12'][Math.floor(r() * 4)]), 0, 3.2, d / 2 + 0.9); aw.rotation.x = 0.35; g.add(aw);
     g.add(boxm(w * 0.8, 1.1, 0.3, new THREE.MeshBasicMaterial({ map: textTex("DO'KON", '#ffe9a8', '#2a160a') }), 0, h - 0.2, d / 2 + 0.2));
   } else {
     const f = 1 + Math.floor(r() * 3), w = 7 + r() * 1.5, d = 6 + r() * 1.5, h = 3.2 * f; g.userData.top = h + 3.5;
-    g.add(boxm(w, h, d, wallMat(wall, 2, f), 0, h / 2, 0));
+    g.add(boxm(w + 0.4, 2.4, d + 0.4, flat('#6b6258'), 0, -1, 0), boxm(w, h, d, wallMat(wall, 2, f), 0, h / 2, 0));
     const rf = mesh(new THREE.ConeGeometry((Math.max(w, d) / 2 + 0.6) / 0.707, 3, 4), flat(roof), 0, h + 1.5, 0); rf.rotation.y = Math.PI / 4; g.add(rf);
     g.add(boxm(1.1, 2, 0.2, flat('#5b2a1e'), 0, 1, d / 2 + 0.1), boxm(0.9, 2, 0.9, flat('#7a5c4a'), w / 3, h + 2.2, 0));
   }
   return g;
 };
-const hold = () => { const g = new THREE.Group(); g.add(boxm(P - 3, 0.6, P - 3, flat(0xf6b040), 0, 0.3, 0)); g.userData.top = 1; return g; };
+const hold = () => { const g = new THREE.Group(); g.add(boxm(P - 3, 0.8, P - 3, flat(0xf6b040), 0, 0.3, 0)); g.userData.top = 1; return g; };
 
 const WHEEL = new THREE.CylinderGeometry(0.45, 0.45, 0.4, 8), WM = flat('#111');
 const HEAD = new THREE.MeshBasicMaterial({ color: 0xfff2b0 }), TAIL = new THREE.MeshBasicMaterial({ color: 0xff2a2a });
@@ -69,9 +74,9 @@ const carMesh = (color: number, van: boolean) => {
   for (const sz of [-0.7, 0.7]) g.add(boxm(0.1, 0.3, 0.4, HEAD, 2.2, 1, sz), boxm(0.1, 0.3, 0.4, TAIL, -2.2, 1, sz));
   return g;
 };
-
 const tower = () => {
   const g = new THREE.Group(), gold = new THREE.MeshLambertMaterial({ color: 0xffc94a, emissive: 0x5a3d00 });
+  g.add(boxm(52, 40, 52, flat('#555a63'), 0, -16, 0));
   [[46, 120, 0], [36, 100, 120], [26, 80, 220]].forEach(([w, h, y]) =>
     g.add(boxm(w, h, w, wallMat('#7a8798', 1, 1, [Math.round(w / 3.5), Math.round(h / 3)]), 0, y + h / 2, 0), boxm(w + 1.5, 2, w + 1.5, gold, 0, y + h, 0)));
   const sign = new THREE.MeshBasicMaterial({ map: textTex('MAGA', '#ffd76a', '#1a1208') });
@@ -79,119 +84,174 @@ const tower = () => {
   g.add(mesh(new THREE.CylinderGeometry(0.4, 1.2, 50, 6), gold, 0, 333, 0), mesh(new THREE.SphereGeometry(1.6, 8, 6), new THREE.MeshBasicMaterial({ color: 0xff3b3b }), 0, 360, 0));
   return g;
 };
+// road / river ribbons that follow the terrain
+const ribbon = (lines: number[][], w: number, dy: number, color: string, po: number) => {
+  const pos: number[] = [], idx: number[] = []; let base = 0;
+  for (const L of lines) {
+    const n = L.length / 2;
+    for (let i = 0; i < n; i++) {
+      const a = Math.max(0, i - 1), b = Math.min(n - 1, i + 1);
+      let tx = L[b * 2] - L[a * 2], tz = L[b * 2 + 1] - L[a * 2 + 1]; const l = Math.hypot(tx, tz) || 1; tx /= l; tz /= l;
+      const x = L[i * 2], z = L[i * 2 + 1], y = H(x, z) + dy;
+      pos.push(x - tz * w / 2, y, z + tx * w / 2, x + tz * w / 2, y, z - tx * w / 2);
+      if (i < n - 1) { const k = base + i * 2; idx.push(k, k + 2, k + 1, k + 1, k + 2, k + 3); }
+    }
+    base += n * 2;
+  }
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx); g.computeVertexNormals();
+  return new THREE.Mesh(g, new THREE.MeshLambertMaterial({ color, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: po, polygonOffsetUnits: po }));
+};
 
 export default function City() {
   const box = useRef<HTMLDivElement>(null), tagsEl = useRef<HTMLDivElement>(null), S = useRef<any>({ groups: new Map(), tags: new Map() }), ps = useRef<Parcel[]>([]);
   const [parcels, setParcels] = useState<Parcel[]>([]), [welcome, setWelcome] = useState(true), [sel, setSel] = useState<null | { cx: number; cy: number; parcel?: Parcel }>(null);
   const [nick, setNick] = useState(''), [q, setQ] = useState(''), [kind, setKind] = useState('house'), [msg, setMsg] = useState(''), [busy, setBusy] = useState(false), [done, setDone] = useState(false);
-  const [off, setOff] = useState(0), [now, setNow] = useState(new Date());
+  const [off, setOff] = useState(0), [now, setNow] = useState(new Date()), [rev, setRev] = useState(0);
   const live = parcels.filter(p => p.paid).length;
   const clk = new Intl.DateTimeFormat('en-GB', { timeZone: 'Asia/Tashkent', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(now.getTime() + off * 36e5));
 
   useEffect(() => {
-    const s = S.current, el = box.current!, W = () => el.clientWidth, H = () => el.clientHeight;
-    s.groups = new Map(); s.tags.forEach((t: any) => t.el.remove()); s.tags = new Map(); s.rotate = true;
-    const renderer = new THREE.WebGLRenderer({ antialias: true }); renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.setSize(W(), H()); el.appendChild(renderer.domElement);
-    const scene = new THREE.Scene(), camera = new THREE.PerspectiveCamera(50, W() / H(), 1, 3000), tgt0 = new THREE.Vector3(GW * P / 2, 70, 40);
-    camera.position.set(GW * P / 2 + 170, 150, GW * P + 60);
+    const s = S.current, el = box.current!, W = () => el.clientWidth, H2 = () => el.clientHeight;
+    s.groups = new Map(); s.tags.forEach((t: any) => t.el.remove()); s.tags = new Map(); s.rotate = true; s.cars = [];
+    const renderer = new THREE.WebGLRenderer({ antialias: true }); renderer.setPixelRatio(Math.min(devicePixelRatio, 2)); renderer.setSize(W(), H2()); el.appendChild(renderer.domElement);
+    const scene = new THREE.Scene(), camera = new THREE.PerspectiveCamera(50, W() / H2(), 1, 3000), tgt0 = new THREE.Vector3(N / 2, 20, 190);
+    camera.position.set(N / 2 + 120, 110, 380);
     const controls = new OrbitControls(camera, renderer.domElement);
-    controls.target.copy(tgt0); controls.enableDamping = true; controls.maxPolarAngle = 1.45; controls.minDistance = 15; controls.maxDistance = 700; controls.autoRotateSpeed = 0.5;
+    controls.target.copy(tgt0); controls.enableDamping = true; controls.maxPolarAngle = 1.45; controls.minDistance = 12; controls.maxDistance = 700; controls.autoRotateSpeed = 0.5;
+    controls.screenSpacePanning = false; controls.panSpeed = 1.3;
+    controls.touches = { ONE: THREE.TOUCH.PAN, TWO: THREE.TOUCH.DOLLY_ROTATE };
+    controls.mouseButtons = { LEFT: THREE.MOUSE.PAN, MIDDLE: THREE.MOUSE.DOLLY, RIGHT: THREE.MOUSE.ROTATE };
     controls.addEventListener('start', () => (s.anim = null));
     s.scene = scene; s.camera = camera; s.controls = controls; s.home = { tp: tgt0.clone(), cp: camera.position.clone() };
     const amb = new THREE.AmbientLight(0xffffff, 0.8), sun = new THREE.DirectionalLight(0xffe0b0, 0.8); sun.position.set(200, 300, 100); scene.add(amb, sun);
-    scene.fog = new THREE.Fog(0x9ec9ff, 200, 1100); scene.background = new THREE.Color(0x9ec9ff);
+    scene.fog = new THREE.Fog(0x9ec9ff, 300, 1200); scene.background = new THREE.Color(0x9ec9ff);
 
-    // ground: lawns (empty plots), roads, sidewalks
-    const U = 48, cv = document.createElement('canvas'); cv.width = cv.height = GW * U; const g = cv.getContext('2d')!;
-    for (let c = 0; c < GW; c++) for (let r = 0; r < GW; r++) {
-      const x = c * U, y = r * U, v = c % 5 === 4, hz = r % 5 === 4;
-      if (!v && !hz) { g.fillStyle = '#2d5a2b'; g.fillRect(x, y, U, U); g.fillStyle = '#34692f'; g.fillRect(x + 3, y + 3, U - 6, U - 6); continue; }
-      g.fillStyle = '#3a3d44'; g.fillRect(x, y, U, U); g.fillStyle = '#8c8c86';
-      if (v && !hz) { g.fillRect(x, y, 6, U); g.fillRect(x + U - 6, y, 6, U); }
-      if (hz && !v) { g.fillRect(x, y, U, 6); g.fillRect(x, y + U - 6, U, 6); }
-      g.fillStyle = '#e8e0b0';
-      if (v && !hz) g.fillRect(x + U / 2 - 1.5, y + 8, 3, 14);
-      if (hz && !v) g.fillRect(x + 8, y + U / 2 - 1.5, 14, 3);
+    // terrain with hills
+    const tg = new THREE.PlaneGeometry(1500, 1500, 200, 200); tg.rotateX(-Math.PI / 2); tg.translate(N / 2, 0, N / 2);
+    const tp = tg.attributes.position, col = new Float32Array(tp.count * 3), c1 = new THREE.Color(), rock = new THREE.Color('#8a7f6e');
+    for (let i = 0; i < tp.count; i++) {
+      const x = tp.getX(i), z = tp.getZ(i), h = H(x, z); tp.setY(i, h);
+      c1.setHSL(0.27 + 0.03 * Math.sin(x / 40 + z / 55), 0.38, clamp(0.26 + h / 150, 0.2, 0.42));
+      if (h > 30) c1.lerp(rock, clamp((h - 30) / 40, 0, 1));
+      col.set([c1.r, c1.g, c1.b], i * 3);
     }
-    const gt = new THREE.CanvasTexture(cv); gt.colorSpace = THREE.SRGBColorSpace; gt.anisotropy = 8;
-    const ground = new THREE.Mesh(new THREE.PlaneGeometry(GW * P, GW * P), new THREE.MeshLambertMaterial({ map: gt }));
-    ground.rotation.x = -Math.PI / 2; ground.position.set(GW * P / 2, 0, GW * P / 2); scene.add(ground);
-    const outer = new THREE.Mesh(new THREE.PlaneGeometry(6000, 6000), flat('#2a4f27')); outer.rotation.x = -Math.PI / 2; outer.position.set(GW * P / 2, -0.2, GW * P / 2); scene.add(outer);
+    tg.setAttribute('color', new THREE.BufferAttribute(col, 3)); tg.computeVertexNormals();
+    const terrain = new THREE.Mesh(tg, new THREE.MeshLambertMaterial({ vertexColors: true })); scene.add(terrain);
+    const under = new THREE.Mesh(new THREE.PlaneGeometry(6000, 6000), flat('#2a4f27')); under.rotation.x = -Math.PI / 2; under.position.set(N / 2, -1, N / 2); scene.add(under);
+    const tw = tower(); tw.position.set(N / 2, H(N / 2, -90), -90); scene.add(tw);
 
-    // trees
-    const rt = rnd(7), spots: number[][] = [], d = new THREE.Object3D();
-    for (let c = 0; c < GW; c++) for (let r = 0; r < GW; r++) if (!isRoad(c, r) && rt() < 0.6) spots.push([c * P + P / 2 + (rt() < 0.5 ? -5 : 5), r * P + P / 2 + (rt() < 0.5 ? -5 : 5), 0.8 + rt() * 0.7]);
-    const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.3, 0.4, 2.4, 5), flat('#5b3b22'), spots.length), crowns = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(2, 0), flat('#ffffff'), spots.length);
-    spots.forEach(([x, z, k], i) => {
-      d.scale.setScalar(k); d.position.set(x, 1.2 * k, z); d.updateMatrix(); trunks.setMatrixAt(i, d.matrix);
-      d.position.y = 3.6 * k; d.updateMatrix(); crowns.setMatrixAt(i, d.matrix); crowns.setColorAt(i, new THREE.Color().setHSL(0.28 + rt() * 0.08, 0.5, 0.25 + rt() * 0.12));
-    });
-    scene.add(trunks, crowns);
-
-    // street lamps along every road
-    const lamps: number[][] = [];
-    for (let k = 4; k < GW; k += 5) for (let i = 0; i < GW; i++) if (i % 5 !== 4)
-      lamps.push([k * P + (i % 2 ? 0.9 : P - 0.9), i * P + P / 2], [i * P + P / 2, k * P + (i % 2 ? P - 0.9 : 0.9)]);
-    const poles = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.12, 0.16, 6, 5), flat('#3b3f46'), lamps.length), heads = new THREE.InstancedMesh(new THREE.SphereGeometry(0.5, 6, 4), new THREE.MeshBasicMaterial({ color: 0xffd27a }), lamps.length);
-    const glowPos = new Float32Array(lamps.length * 3);
-    d.scale.setScalar(1);
-    lamps.forEach(([x, z], i) => { d.position.set(x, 3, z); d.updateMatrix(); poles.setMatrixAt(i, d.matrix); d.position.y = 6.1; d.updateMatrix(); heads.setMatrixAt(i, d.matrix); glowPos.set([x, 6.1, z], i * 3); });
-    const gc = document.createElement('canvas'); gc.width = gc.height = 64; const gg = gc.getContext('2d')!, gr = gg.createRadialGradient(32, 32, 0, 32, 32, 32);
-    gr.addColorStop(0, 'rgba(255,220,140,1)'); gr.addColorStop(0.3, 'rgba(255,190,90,0.45)'); gr.addColorStop(1, 'rgba(255,170,60,0)'); gg.fillStyle = gr; gg.fillRect(0, 0, 64, 64);
-    const gtex = new THREE.CanvasTexture(gc), glowGeo = new THREE.BufferGeometry(); glowGeo.setAttribute('position', new THREE.BufferAttribute(glowPos, 3));
-    const glow = new THREE.Points(glowGeo, new THREE.PointsMaterial({ map: gtex, size: 14, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }));
-    const pool = new THREE.InstancedMesh(new THREE.PlaneGeometry(9, 9), new THREE.MeshBasicMaterial({ map: gtex, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }), lamps.length);
-    d.rotation.x = -Math.PI / 2; lamps.forEach(([x, z], i) => { d.position.set(x, 0.06, z); d.updateMatrix(); pool.setMatrixAt(i, d.matrix); }); d.rotation.set(0, 0, 0);
-    scene.add(poles, heads, glow, pool);
-
-    // Uzbek traffic
-    const cars: any[] = [], rc = rnd(99), COL = [0xf5f5f5, 0xf5f5f5, 0xf5f5f5, 0x15171c, 0xb9bfc7, 0x2a4f9c, 0x8a1b1b];
-    for (let i = 0; i < 46; i++) { const m = carMesh(COL[Math.floor(rc() * COL.length)], rc() < 0.3); cars.push({ m, axis: i % 2 ? 'x' : 'z', road: 4 + 5 * Math.floor(rc() * 7), dir: rc() < 0.5 ? 1 : -1, pos: rc() * GW * P, v: 9 + rc() * 6 }); scene.add(m); }
-    const place = (c: any) => {
-      const L = c.road * P + P / 2, o = 2.4 * c.dir;
-      if (c.axis === 'x') { c.m.position.set(c.pos, 0, L + o); c.m.rotation.y = c.dir > 0 ? 0 : Math.PI; } else { c.m.position.set(L - o, 0, c.pos); c.m.rotation.y = c.dir > 0 ? -Math.PI / 2 : Math.PI / 2; }
+    const d = new THREE.Object3D(), rt = rnd(7);
+    s.loadCity = (lines: [number, number[]][]) => {
+      // roads and river
+      const by: number[][][] = [[], [], [], []]; lines.forEach(([c, L]) => by[c].push(L));
+      scene.add(ribbon(by[3], RW[3], 0.05, '#3f7fbf', -1));
+      for (const c of [0, 1, 2]) { scene.add(ribbon(by[c], RW[c] + 2.2, 0.08, '#8c8c86', -1)); scene.add(ribbon(by[c], RW[c], 0.12, '#3a3d44', -2)); }
+      scene.add(ribbon(by[2], 0.3, 0.16, '#e8e0b0', -3));
+      // which plots are free + which way the road is
+      const blocked = new Uint8Array(GW * GW), fd = new Float32Array(GW * GW).fill(1e9), fx = new Float32Array(GW * GW), fz = new Float32Array(GW * GW);
+      lines.forEach(([c, L]) => {
+        for (let i = 1; i < L.length / 2; i++) {
+          const x0 = L[i * 2 - 2], z0 = L[i * 2 - 1], x1 = L[i * 2], z1 = L[i * 2 + 1], n = Math.max(1, Math.ceil(Math.hypot(x1 - x0, z1 - z0) / 3));
+          for (let k = 0; k < n; k++) {
+            const x = x0 + (x1 - x0) * k / n, z = z0 + (z1 - z0) * k / n, rr = HW[c] + 5.5;
+            for (let cx = Math.max(0, Math.floor((x - 36) / P)); cx <= Math.min(GW - 1, Math.floor((x + 36) / P)); cx++)
+              for (let cz = Math.max(0, Math.floor((z - 36) / P)); cz <= Math.min(GW - 1, Math.floor((z + 36) / P)); cz++) {
+                const px = cx * P + P / 2, pz = cz * P + P / 2, dd = Math.hypot(px - x, pz - z), id = cz * GW + cx;
+                if (dd < rr) blocked[id] = 1;
+                if (dd < fd[id]) { fd[id] = dd; fx[id] = x - px; fz[id] = z - pz; }
+              }
+          }
+        }
+      });
+      s.blocked = blocked; s.fd = fd; s.fx = fx; s.fz = fz;
+      // trees in free plots + forest on the mountains
+      const spots: number[][] = [];
+      for (let c = 0; c < GW; c++) for (let r = 0; r < GW; r++) if (!blocked[r * GW + c] && rt() < 0.6) spots.push([c * P + P / 2 + (rt() < 0.5 ? -5 : 5), r * P + P / 2 + (rt() < 0.5 ? -5 : 5), 0.8 + rt() * 0.7]);
+      for (let i = 0; i < 500; i++) { const a = rt() * 6.283, rr = 340 + rt() * 200; spots.push([N / 2 + Math.cos(a) * rr, N / 2 + Math.sin(a) * rr, 1.4 + rt() * 1.4]); }
+      const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.3, 0.4, 2.4, 5), flat('#5b3b22'), spots.length), crowns = new THREE.InstancedMesh(new THREE.IcosahedronGeometry(2, 0), flat('#ffffff'), spots.length);
+      spots.forEach(([x, z, k], i) => {
+        const h = H(x, z); d.rotation.set(0, 0, 0); d.scale.setScalar(k); d.position.set(x, h + 1.2 * k, z); d.updateMatrix(); trunks.setMatrixAt(i, d.matrix);
+        d.position.y = h + 3.6 * k; d.updateMatrix(); crowns.setMatrixAt(i, d.matrix); crowns.setColorAt(i, new THREE.Color().setHSL(0.28 + rt() * 0.08, 0.5, 0.25 + rt() * 0.12));
+      });
+      scene.add(trunks, crowns);
+      // street lamps along the roads
+      const lamps: number[][] = [];
+      lines.forEach(([c, L]) => {
+        if (c === 3) return; const step = c === 0 ? 46 : 30; let sd = 0, next = 12, side = 1;
+        for (let i = 1; i < L.length / 2; i++) {
+          const x0 = L[i * 2 - 2], z0 = L[i * 2 - 1], x1 = L[i * 2], z1 = L[i * 2 + 1], len = Math.hypot(x1 - x0, z1 - z0); if (!len) continue;
+          const tx = (x1 - x0) / len, tz = (z1 - z0) / len;
+          while (next <= sd + len) { const a = next - sd, o = (HW[c] + 1.4) * side; lamps.push([x0 + tx * a - tz * o, z0 + tz * a + tx * o]); side = -side; next += step; }
+          sd += len;
+        }
+      });
+      lamps.length = Math.min(lamps.length, 2500);
+      const poles = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.12, 0.16, 6, 5), flat('#3b3f46'), lamps.length), heads = new THREE.InstancedMesh(new THREE.SphereGeometry(0.5, 6, 4), new THREE.MeshBasicMaterial({ color: 0xffd27a }), lamps.length);
+      const glowPos = new Float32Array(lamps.length * 3);
+      d.rotation.set(0, 0, 0); d.scale.setScalar(1);
+      lamps.forEach(([x, z], i) => { const h = H(x, z); d.position.set(x, h + 3, z); d.updateMatrix(); poles.setMatrixAt(i, d.matrix); d.position.y = h + 6.1; d.updateMatrix(); heads.setMatrixAt(i, d.matrix); glowPos.set([x, h + 6.1, z], i * 3); });
+      const gc = document.createElement('canvas'); gc.width = gc.height = 64; const gg = gc.getContext('2d')!, gr = gg.createRadialGradient(32, 32, 0, 32, 32, 32);
+      gr.addColorStop(0, 'rgba(255,220,140,1)'); gr.addColorStop(0.3, 'rgba(255,190,90,0.45)'); gr.addColorStop(1, 'rgba(255,170,60,0)'); gg.fillStyle = gr; gg.fillRect(0, 0, 64, 64);
+      const gtex = new THREE.CanvasTexture(gc), glowGeo = new THREE.BufferGeometry(); glowGeo.setAttribute('position', new THREE.BufferAttribute(glowPos, 3));
+      s.glow = new THREE.Points(glowGeo, new THREE.PointsMaterial({ map: gtex, size: 14, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }));
+      s.pool = new THREE.InstancedMesh(new THREE.PlaneGeometry(9, 9), new THREE.MeshBasicMaterial({ map: gtex, transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }), lamps.length);
+      d.rotation.x = -Math.PI / 2; lamps.forEach(([x, z], i) => { d.position.set(x, H(x, z) + 0.4, z); d.updateMatrix(); s.pool.setMatrixAt(i, d.matrix); }); d.rotation.set(0, 0, 0);
+      scene.add(poles, heads, s.glow, s.pool);
+      // Uzbek traffic on the real roads
+      const rc = rnd(99), COL = [0xf5f5f5, 0xf5f5f5, 0xf5f5f5, 0x15171c, 0xb9bfc7, 0x2a4f9c, 0x8a1b1b];
+      const cl = lines.filter(([c, L]) => c >= 1 && c < 3 && L.length >= 8).map(([c, L]) => {
+        const cum = [0]; for (let i = 1; i < L.length / 2; i++) cum.push(cum[i - 1] + Math.hypot(L[i * 2] - L[i * 2 - 2], L[i * 2 + 1] - L[i * 2 - 1]));
+        return { c, L, cum, len: cum[cum.length - 1] };
+      }).filter(o => o.len > 60);
+      if (cl.length) for (let i = 0; i < 50; i++) { const o = cl[Math.floor(rc() * cl.length)], m = carMesh(COL[Math.floor(rc() * COL.length)], rc() < 0.3); s.cars.push({ m, o, s: rc() * o.len, dir: rc() < 0.5 ? 1 : -1, v: 8 + rc() * 6 }); scene.add(m); }
+      s.apply(); setRev(r => r + 1);
     };
+    const place = (c: any) => {
+      const { L, cum } = c.o; let i = 1; while (i < cum.length - 1 && cum[i] < c.s) i++;
+      const x0 = L[i * 2 - 2], z0 = L[i * 2 - 1], x1 = L[i * 2], z1 = L[i * 2 + 1], len = cum[i] - cum[i - 1] || 1, t = clamp((c.s - cum[i - 1]) / len, 0, 1);
+      const tx = (x1 - x0) / len * c.dir, tz = (z1 - z0) / len * c.dir, x = x0 + (x1 - x0) * t - tz * HW[c.o.c] * 0.5, z = z0 + (z1 - z0) * t + tx * HW[c.o.c] * 0.5;
+      c.m.position.set(x, H(x, z), z); c.m.rotation.y = Math.atan2(-tz, tx);
+    };
+    fetch('/api/andijan').then(r => r.json()).then(j => { if (j.lines?.length) s.loadCity(j.lines); else setMsg("Andijon yo'llari yuklanmadi. Vercel'da Redeploy qiling."); }).catch(() => setMsg("Andijon yo'llari yuklanmadi."));
 
-    const tw = tower(); tw.position.set(GW * P / 2, 0, -90); scene.add(tw);
-
-    // day / night
     s.apply = () => {
       const hr: number = s.hour ?? 18.5, sn = Math.sin((hr - 6) / 12 * Math.PI), n = clamp(0.5 - sn * 2.2, 0, 1);
-      const sky = n < 0.5 ? mixc([135, 190, 255], [217, 150, 130], n * 2) : mixc([217, 150, 130], [10, 16, 48], (n - 0.5) * 2), col = `rgb(${sky})`, e = clamp(n * 1.5, 0, 1);
-      (scene.background as THREE.Color).set(col); (scene.fog as THREE.Fog).color.set(col);
-      amb.intensity = 0.95 - 0.7 * n; sun.intensity = 0.9 - 0.8 * n;
-      winMats.forEach(m => (m.emissiveIntensity = e)); (glow.material as THREE.PointsMaterial).opacity = e; (pool.material as THREE.Material).opacity = e * 0.55;
+      const sky = n < 0.5 ? mixc([135, 190, 255], [217, 150, 130], n * 2) : mixc([217, 150, 130], [20, 30, 74], (n - 0.5) * 2), colr = `rgb(${sky})`, e = clamp(n * 1.5, 0, 1);
+      (scene.background as THREE.Color).set(colr); (scene.fog as THREE.Fog).color.set(colr);
+      amb.intensity = 0.95 - 0.5 * n; sun.intensity = 0.9 - 0.75 * n;
+      winMats.forEach(m => (m.emissiveIntensity = e));
+      if (s.glow) { (s.glow.material as THREE.PointsMaterial).opacity = e; (s.pool.material as THREE.Material).opacity = e * 0.55; }
     };
     s.apply();
 
-    // tap a plot
-    const ray = new THREE.Raycaster(), plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), pt = new THREE.Vector3(), cvs = renderer.domElement;
-    const hl = new THREE.Mesh(new THREE.BoxGeometry(P - 1, 0.4, P - 1), new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.5 })); hl.visible = false; scene.add(hl); s.hl = hl;
+    const ray = new THREE.Raycaster(), cvs = renderer.domElement;
+    const hl = new THREE.Mesh(new THREE.BoxGeometry(P - 1, 1.2, P - 1), new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.5 })); hl.visible = false; scene.add(hl); s.hl = hl;
     let down = [0, 0, 0];
     cvs.addEventListener('pointerdown', e => { down = [e.clientX, e.clientY, Date.now()]; });
     cvs.addEventListener('pointerup', e => {
       if (Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 8 || Date.now() - down[2] > 500) return;
       const b = cvs.getBoundingClientRect();
       ray.setFromCamera(new THREE.Vector2(((e.clientX - b.left) / b.width) * 2 - 1, -((e.clientY - b.top) / b.height) * 2 + 1), camera);
-      if (ray.ray.intersectPlane(plane, pt)) s.pick(Math.floor(pt.x / P), Math.floor(pt.z / P));
+      const hit = ray.intersectObject(terrain)[0]; if (hit) s.pick(Math.floor(hit.point.x / P), Math.floor(hit.point.z / P));
     });
 
     let raf = 0, last = performance.now();
     const loop = (t: number) => {
       const dt = Math.min(0.05, (t - last) / 1000); last = t;
       if (s.anim) { controls.target.lerp(s.anim.tp, 0.06); camera.position.lerp(s.anim.cp, 0.06); if (camera.position.distanceTo(s.anim.cp) < 0.6) s.anim = null; }
+      controls.target.x = clamp(controls.target.x, -40, N + 40); controls.target.z = clamp(controls.target.z, -150, N + 40);
       controls.autoRotate = s.rotate; controls.update();
-      for (const c of cars) { c.pos = (c.pos + c.dir * c.v * dt + GW * P) % (GW * P); place(c); }
-      const hw = W() / 2, hh = H() / 2;
-      for (const tg of s.tags.values()) {
-        const v = tg.pos.clone().project(camera);
-        if (v.z > 1 || camera.position.distanceTo(tg.pos) > 280) { tg.el.style.display = 'none'; continue; }
-        tg.el.style.display = 'block'; tg.el.style.transform = `translate(${v.x * hw + hw}px,${-v.y * hh + hh}px) translate(-50%,-100%)`;
+      for (const c of s.cars) { c.s += c.dir * c.v * dt; if (c.s > c.o.len) { c.s = c.o.len; c.dir = -1; } else if (c.s < 0) { c.s = 0; c.dir = 1; } place(c); }
+      const hw = W() / 2, hh = H2() / 2;
+      for (const tg2 of s.tags.values()) {
+        const v = tg2.pos.clone().project(camera);
+        if (v.z > 1 || camera.position.distanceTo(tg2.pos) > 280) { tg2.el.style.display = 'none'; continue; }
+        tg2.el.style.display = 'block'; tg2.el.style.transform = `translate(${v.x * hw + hw}px,${-v.y * hh + hh}px) translate(-50%,-100%)`;
       }
       renderer.render(scene, camera); raf = requestAnimationFrame(loop);
     };
     raf = requestAnimationFrame(loop);
-    const onR = () => { renderer.setSize(W(), H()); camera.aspect = W() / H(); camera.updateProjectionMatrix(); };
+    const onR = () => { renderer.setSize(W(), H2()); camera.aspect = W() / H2(); camera.updateProjectionMatrix(); };
     addEventListener('resize', onR);
     return () => { cancelAnimationFrame(raf); removeEventListener('resize', onR); renderer.dispose(); renderer.domElement.remove(); };
   }, []);
@@ -214,24 +274,25 @@ export default function City() {
     const liveP = parcels.filter(p => p.paid || Date.now() - +new Date(p.created_at) < TTL), ids = new Set(liveP.map(p => p.id));
     for (const [id, g] of s.groups) if (!ids.has(id)) { s.scene.remove(g); s.groups.delete(id); s.tags.get(id)?.el.remove(); s.tags.delete(id); }
     for (const p of liveP) {
-      const key = p.id + (p.paid ? 'p' : 'u'), ex = s.groups.get(p.id);
+      const key = p.id + (p.paid ? 'p' : 'u') + (s.fd ? 'f' : 'n'), ex = s.groups.get(p.id);
       if (ex && ex.userData.key === key) continue;
       if (ex) { s.scene.remove(ex); s.tags.get(p.id)?.el.remove(); }
-      const g = p.paid ? build(p) : hold();
-      g.position.set(p.cx * P + P / 2, 0, p.cy * P + P / 2); g.userData.key = key; s.scene.add(g); s.groups.set(p.id, g);
+      const g = p.paid ? build(p) : hold(), x = p.cx * P + P / 2, z = p.cy * P + P / 2, id = p.cy * GW + p.cx;
+      g.position.set(x, H(x, z), z); if (s.fd && s.fd[id] < 1e8) g.rotation.y = Math.atan2(s.fx[id], s.fz[id]);
+      g.userData.key = key; s.scene.add(g); s.groups.set(p.id, g);
       const el = document.createElement('div'); el.className = 'nc-tag'; el.textContent = (p.paid ? '' : '⏳ ') + p.insta; tagsEl.current!.appendChild(el);
-      s.tags.set(p.id, { el, pos: new THREE.Vector3(g.position.x, g.userData.top + 2.5, g.position.z) });
+      s.tags.set(p.id, { el, pos: new THREE.Vector3(x, g.position.y + g.userData.top + 2.5, z) });
     }
     s.apply?.();
-  }, [parcels]);
+  }, [parcels, rev]);
 
   S.current.pick = (cx: number, cy: number) => {
-    const hl = S.current.hl;
-    if (cx < 0 || cy < 0 || cx >= GW || cy >= GW || isRoad(cx, cy)) { setSel(null); if (hl) hl.visible = false; return; }
+    const s = S.current, hl = s.hl;
+    if (cx < 0 || cy < 0 || cx >= GW || cy >= GW || s.blocked?.[cy * GW + cx]) { setSel(null); if (hl) hl.visible = false; setMsg("Bu yer yo'l yoki daryo, uy qurib bo'lmaydi"); return; }
     const parcel = ps.current.find(p => p.cx === cx && p.cy === cy && (p.paid || Date.now() - +new Date(p.created_at) < TTL));
-    hl.position.set(cx * P + P / 2, 0.2, cy * P + P / 2); hl.visible = true; setSel({ cx, cy, parcel }); setDone(false); setMsg('');
+    hl.position.set(cx * P + P / 2, H(cx * P + P / 2, cy * P + P / 2) + 0.4, cy * P + P / 2); hl.visible = true; setSel({ cx, cy, parcel }); setDone(false); setMsg('');
   };
-  const fly = (cx: number, cy: number) => { const x = cx * P + P / 2, z = cy * P + P / 2; S.current.anim = { tp: new THREE.Vector3(x, 0, z), cp: new THREE.Vector3(x + 28, 26, z + 38) }; };
+  const fly = (cx: number, cy: number) => { const x = cx * P + P / 2, z = cy * P + P / 2, h = H(x, z); S.current.anim = { tp: new THREE.Vector3(x, h, z), cp: new THREE.Vector3(x + 28, h + 26, z + 38) }; };
   const zoom = (k: number) => { const s = S.current; s.anim = null; s.camera.position.lerpVectors(s.controls.target, s.camera.position, k); };
   const find = (v: string) => {
     const k = v.trim().replace(/^@/, '').toLowerCase(); if (!k) return;
@@ -241,7 +302,7 @@ export default function City() {
   };
   const startBuild = () => {
     let best: number[] | null = null, bd = 1e9;
-    for (let x = 0; x < GW; x++) for (let y = 0; y < GW; y++) if (!isRoad(x, y) && !ps.current.some(p => p.cx === x && p.cy === y)) { const dd = Math.hypot(x - GW / 2, y - GW / 2); if (dd < bd) { bd = dd; best = [x, y]; } }
+    for (let x = 0; x < GW; x++) for (let y = 0; y < GW; y++) if (!S.current.blocked?.[y * GW + x] && !ps.current.some(p => p.cx === x && p.cy === y)) { const dd = Math.hypot(x - GW / 2, y - GW / 2); if (dd < bd) { bd = dd; best = [x, y]; } }
     setWelcome(false); setMsg(''); if (best) { fly(best[0], best[1]); S.current.pick(best[0], best[1]); }
   };
   const order = async () => {
