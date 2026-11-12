@@ -3,6 +3,7 @@
   "private": true,
   "scripts": { "dev": "next dev", "build": "next build", "start": "next start" },
   "dependencies": {
+    "three": "^0.169.0",
     "@supabase/supabase-js": "^2.45.0",
     "maplibre-gl": "^5.0.0",
     "next": "^15.1.0",
@@ -11,6 +12,7 @@
     "suncalc": "^1.9.0"
   },
   "devDependencies": {
+    "@types/three": "^0.169.0",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/suncalc": "^1.9.2",
