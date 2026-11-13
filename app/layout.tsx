@@ -9,7 +9,17 @@ const PATCH = `(function () {
   var HOSTS = ['https://overpass-api.de/api/interpreter', 'https://overpass.kumi.systems/api/interpreter', 'https://overpass.private.coffee/api/interpreter'];
   var dlat = 1728 / 110574, dlng = 1728 / 84300;
   var bb = (LAT0 - dlat) + ',' + (LNG0 - dlng) + ',' + (LAT0 + dlat) + ',' + (LNG0 + dlng);
-  var q = '[out:json][timeout:60];(way["highway"~"^(motorway|trunk|primary|secondary|tertiary|residential|unclassified|living_street)$"](' + bb + ');way["waterway"~"^(river|canal|stream)$"](' + bb + '););out tags geom;';
+  var q = '[out:json][timeout:40];(way["highway"~"^(motorway|trunk|primary|secondary|tertiary|residential|unclassified)$"](' + bb + ');way["waterway"~"^(river|canal|stream)$"](' + bb + '););out tags geom qt;';
+  function banner(t, bad) {
+    var b = document.getElementById('road-status');
+    if (!t) { if (b) b.remove(); return; }
+    if (!b) {
+      b = document.createElement('div'); b.id = 'road-status';
+      b.style.cssText = 'position:fixed;left:50%;top:70px;transform:translateX(-50%);z-index:99;background:#fbf0dc;border:3px solid #e9d6b0;border-radius:14px;padding:8px 14px;font:700 13px system-ui;box-shadow:0 3px 0 #c9b387;max-width:90vw;text-align:center';
+      document.body.appendChild(b);
+    }
+    b.textContent = t; b.style.color = bad ? '#b3261e' : '#3b2412';
+  }
   function conv(j) {
     var out = [], els = j.elements || [];
     for (var a = 0; a < els.length; a++) {
@@ -36,18 +46,25 @@ const PATCH = `(function () {
       var c = JSON.parse(localStorage.getItem(KEY) || 'null');
       if (c && c.lines && c.lines.length && c.t > Date.now() - 864e5) return Promise.resolve(reply(c.lines));
     } catch (e) {}
+    var why = [];
     function tryHost(i) {
-      if (i >= HOSTS.length) return of('/api/andijan');
-      var ac = new AbortController(), timer = setTimeout(function () { ac.abort(); }, 40000);
+      if (i >= HOSTS.length) { banner("❌ Xarita serveri javob bermadi: " + why.join(" | "), true); return of('/api/andijan'); }
+      banner("⏳ Andijon yo'llari yuklanmoqda (" + (i + 1) + "/" + HOSTS.length + "), 10-40 soniya kuting...");
+      var ac = new AbortController(), timer = setTimeout(function () { ac.abort(); }, 35000);
       return of(HOSTS[i], { method: 'POST', body: 'data=' + encodeURIComponent(q), headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, signal: ac.signal })
-        .then(function (r) { if (!r.ok) throw 0; return r.json(); })
+        .then(function (r) { if (!r.ok) throw 'HTTP ' + r.status; return r.json(); })
         .then(function (j) {
           clearTimeout(timer);
-          var lines = conv(j); if (!lines.length) throw 0;
+          var lines = conv(j); if (!lines.length) throw "bo'sh javob";
           try { localStorage.setItem(KEY, JSON.stringify({ t: Date.now(), lines: lines })); } catch (e) {}
+          banner('');
           return reply(lines);
         })
-        .catch(function () { clearTimeout(timer); return tryHost(i + 1); });
+        .catch(function (e) {
+          clearTimeout(timer);
+          why.push((e && e.name === 'AbortError') ? 'vaqt tugadi' : String((e && e.message) || e));
+          return tryHost(i + 1);
+        });
     }
     return tryHost(0);
   };
